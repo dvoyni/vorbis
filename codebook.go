@@ -9,7 +9,7 @@ const codebookPattern = 0x564342 //"BCV"
 
 type codebook struct {
 	dimensions uint32
-	entries    huffmanCode
+	entries    *huffmanCode
 	values     []float32
 }
 
@@ -40,7 +40,7 @@ func (c *codebook) ReadFrom(r *bitReader) error {
 			currentLength++
 		}
 	}
-	c.entries = entries.code
+	c.entries = entries.build()
 
 	lookupType := r.Read8(4)
 	if lookupType == 0 {
