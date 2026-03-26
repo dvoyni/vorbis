@@ -1,75 +1,69 @@
 package vorbis
 
 type bitReader struct {
-	data      []byte
-	position  int
-	bitOffset uint
-	eof       bool
+	data     []byte
+	position int
+	buf      uint64
+	bitsLeft uint
+	eof      bool
 }
 
 func newBitReader(data []byte) *bitReader {
-	return &bitReader{data, 0, 0, false}
+	return &bitReader{data: data}
 }
 
 func (r *bitReader) EOF() bool {
 	return r.eof
 }
 
-func (r *bitReader) Read1() uint32 {
-	if r.position >= len(r.data) {
-		r.eof = true
-		return 0
-	}
-	var result uint32
-	if r.data[r.position]&(1<<r.bitOffset) != 0 {
-		result = 1
-	}
-	if r.bitOffset < 7 {
-		r.bitOffset++
-	} else {
-		r.bitOffset = 0
+func (r *bitReader) refill() {
+	for r.bitsLeft <= 56 && r.position < len(r.data) {
+		r.buf |= uint64(r.data[r.position]) << r.bitsLeft
+		r.bitsLeft += 8
 		r.position++
 	}
-	return result
 }
 
-func (r *bitReader) read(n uint, bits uint) uint32 {
-	if n > bits {
-		panic("invalid argument")
-	}
-	var result uint32
-	var written uint
-	size := n
-	for n > 0 {
-		if r.position >= len(r.data) {
+func (r *bitReader) Read1() uint32 {
+	if r.bitsLeft == 0 {
+		r.refill()
+		if r.bitsLeft == 0 {
 			r.eof = true
 			return 0
 		}
-		result |= uint32(r.data[r.position]>>r.bitOffset) << written
-		written += 8 - r.bitOffset
-		if n < 8-r.bitOffset {
-			r.bitOffset += n
-			break
-		}
-		n -= 8 - r.bitOffset
-		r.bitOffset = 0
-		r.position++
 	}
-	return result &^ (0xFFFFFFFF << size)
+	bit := uint32(r.buf & 1)
+	r.buf >>= 1
+	r.bitsLeft--
+	return bit
+}
+
+func (r *bitReader) read(n uint) uint32 {
+	if r.bitsLeft < n {
+		r.refill()
+		if r.bitsLeft < n {
+			r.eof = true
+			return 0
+		}
+	}
+	val := uint32(r.buf & ((1 << n) - 1))
+	r.buf >>= n
+	r.bitsLeft -= n
+	return val
 }
 
 func (r *bitReader) Read8(n uint) uint8 {
-	return uint8(r.read(n, 8))
+	return uint8(r.read(n))
 }
 
 func (r *bitReader) Read16(n uint) uint16 {
-	return uint16(r.read(n, 16))
+	return uint16(r.read(n))
 }
 
 func (r *bitReader) Read32(n uint) uint32 {
-	return uint32(r.read(n, 32))
+	return r.read(n)
 }
 
 func (r *bitReader) ReadBool() bool {
-	return r.Read8(1) == 1
+	return r.Read1() == 1
 }
