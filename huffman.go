@@ -2,7 +2,7 @@ package vorbis
 
 type huffmanCode struct {
 	tree  []uint32
-	table [256]uint32 // (value<<5)|length, 0 = fallback to tree
+	table [256]uint32 // (value<<4)|length, 0 = fallback to tree
 }
 
 func (h *huffmanCode) Lookup(r *bitReader) uint32 {
@@ -12,9 +12,9 @@ func (h *huffmanCode) Lookup(r *bitReader) uint32 {
 	if r.bitsLeft >= 8 {
 		entry := h.table[uint8(r.buf)]
 		if entry != 0 {
-			r.buf >>= entry & 0x1f
-			r.bitsLeft -= uint(entry & 0x1f)
-			return entry >> 5
+			r.buf >>= entry & 0xf
+			r.bitsLeft -= uint(entry & 0xf)
+			return entry >> 4
 		}
 	}
 	// fallback: tree walk for codes longer than 8 bits
@@ -94,8 +94,8 @@ func (t *huffmanBuilder) build() *huffmanCode {
 			next := h.tree[i+b&1]
 			b >>= 1
 			if next&1 != 0 {
-				// leaf: pack (value<<5)|length, guaranteed non-zero since consumed>=1
-				h.table[bits] = (next>>1)<<5 | consumed
+				// leaf: pack (value<<4)|length, guaranteed non-zero since consumed>=1
+				h.table[bits] = (next>>1)<<4 | consumed
 				break
 			}
 			if next == 0 {
