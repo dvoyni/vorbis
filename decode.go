@@ -2,10 +2,19 @@ package vorbis
 
 import "errors"
 
+// floorData is one channel's decoded floor for the current packet. The
+// Decoder owns one per channel and the floors fill the same buffers packet
+// after packet, so decoding allocates nothing once they have grown.
 type floorData struct {
 	floor     floor
-	data      interface{}
+	decoded   bool // the channel carries audio; Apply uses the fields below
 	noResidue bool
+
+	// floor 0
+	amplitude    uint32
+	coefficients []float32
+	// floor 1
+	y []uint32
 }
 
 func (d *Decoder) decodePacket(r *bitReader, out []float32) ([]float32, error) {
@@ -130,9 +139,10 @@ func (d *Decoder) decodePacket(r *bitReader, out []float32) ([]float32, error) {
 
 func (d *Decoder) decodeFloors(r *bitReader, floors []floorData, mapping *mapping, n uint32) {
 	for ch := range floors {
-		floor := d.floors[mapping.submaps[mapping.mux[ch]].floor]
-		data := floor.Decode(r, d.codebooks, n)
-		floors[ch] = floorData{floor, data, data == nil}
+		data := &floors[ch]
+		data.floor = d.floors[mapping.submaps[mapping.mux[ch]].floor]
+		data.decoded = data.floor.Decode(r, d.codebooks, n, data)
+		data.noResidue = !data.decoded
 	}
 
 	for i := 0; i < int(mapping.couplingSteps); i++ {
@@ -145,15 +155,16 @@ func (d *Decoder) decodeFloors(r *bitReader, floors []floorData, mapping *mappin
 
 func (d *Decoder) decodeResidue(r *bitReader, out [][]float32, mapping *mapping, floors []floorData, n uint32) {
 	for i := range mapping.submaps {
-		doNotDecode := make([]bool, 0, len(out))
-		tmp := make([][]float32, 0, len(out))
+		doNotDecode := d.submapSkip[:0]
+		tmp := d.submapVectors[:0]
 		for j := 0; j < d.channels; j++ {
 			if mapping.mux[j] == uint8(i) {
 				doNotDecode = append(doNotDecode, floors[j].noResidue)
 				tmp = append(tmp, out[j])
 			}
 		}
-		d.residues[mapping.submaps[i].residue].Decode(r, doNotDecode, n, d.codebooks, tmp)
+		d.submapSkip, d.submapVectors = doNotDecode, tmp
+		d.classifications = d.residues[mapping.submaps[i].residue].Decode(r, doNotDecode, n, d.codebooks, tmp, d.classifications)
 	}
 }
 
@@ -185,8 +196,8 @@ func (d *Decoder) inverseCoupling(mapping *mapping, residueVectors [][]float32) 
 
 func (d *Decoder) applyFloor(floors []floorData, residueVectors [][]float32) {
 	for ch := range residueVectors {
-		if floors[ch].data != nil {
-			floors[ch].floor.Apply(residueVectors[ch], floors[ch].data)
+		if floors[ch].decoded {
+			floors[ch].floor.Apply(residueVectors[ch], &floors[ch])
 		} else {
 			for i := range residueVectors[ch] {
 				residueVectors[ch][i] = 0

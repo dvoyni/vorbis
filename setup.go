@@ -3,8 +3,10 @@ package vorbis
 import "errors"
 
 type floor interface {
-	Decode(*bitReader, []codebook, uint32) interface{}
-	Apply(out []float32, data interface{})
+	// Decode reads one channel's floor into data and reports whether the
+	// channel carries audio in this packet.
+	Decode(r *bitReader, books []codebook, n uint32, data *floorData) bool
+	Apply(out []float32, data *floorData)
 }
 
 type mapping struct {

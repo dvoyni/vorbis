@@ -28,6 +28,12 @@ type Decoder struct {
 	residueBuffer [][]float32
 	floorBuffer   []floorData
 	rawBuffer     [][]float32
+
+	// scratch reused by every packet so that decoding allocates nothing
+	packet          bitReader
+	submapSkip      []bool
+	submapVectors   [][]float32
+	classifications []uint32
 }
 
 // The Bitrate of a vorbis stream.
@@ -111,7 +117,7 @@ func (d *Decoder) Decode(in []byte) ([]float32, error) {
 	if !d.HeadersRead() {
 		return nil, errors.New("vorbis: missing headers")
 	}
-	return d.decodePacket(newBitReader(in), nil)
+	return d.decode(in, nil)
 }
 
 // DecodeInto decodes a packet and stores the result in the given buffer.
@@ -124,7 +130,17 @@ func (d *Decoder) DecodeInto(in []byte, buffer []float32) ([]float32, error) {
 	if len(buffer) < d.BufferSize() {
 		return nil, errors.New("vorbis: buffer too short")
 	}
-	return d.decodePacket(newBitReader(in), buffer)
+	return d.decode(in, buffer)
+}
+
+// decode reads the packet through the Decoder's own bitReader, which a
+// pointer to a local would move to the heap on every call, and lets go of
+// the packet afterwards.
+func (d *Decoder) decode(in []byte, buffer []float32) ([]float32, error) {
+	d.packet = bitReader{data: in}
+	out, err := d.decodePacket(&d.packet, buffer)
+	d.packet.data = nil
+	return out, err
 }
 
 // Clear must be called between decoding two non-consecutive packets.
