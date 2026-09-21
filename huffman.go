@@ -28,12 +28,14 @@ func (h *huffmanCode) Lookup(r *bitReader) uint32 {
 type huffmanBuilder struct {
 	tree      []uint32
 	minLength []uint8
+	next      uint32 // index of the first node not yet allocated
 }
 
 func newHuffmanBuilder(size uint32) *huffmanBuilder {
 	return &huffmanBuilder{
 		tree:      make([]uint32, size),
 		minLength: make([]uint8, size/2),
+		next:      2, // the root occupies 0 and 1
 	}
 }
 
@@ -60,7 +62,7 @@ func (t *huffmanBuilder) put(index, entry uint32, length uint8) bool {
 	}
 	if t.tree[index]&1 == 0 {
 		if t.tree[index] == 0 {
-			t.tree[index] = t.findEmpty(index + 2)
+			t.tree[index] = t.newNode()
 		}
 		if t.put(t.tree[index], entry, length-1) {
 			return true
@@ -68,7 +70,7 @@ func (t *huffmanBuilder) put(index, entry uint32, length uint8) bool {
 	}
 	if t.tree[index+1]&1 == 0 {
 		if t.tree[index+1] == 0 {
-			t.tree[index+1] = t.findEmpty(index + 2)
+			t.tree[index+1] = t.newNode()
 		}
 		if t.put(t.tree[index+1], entry, length-1) {
 			return true
@@ -78,11 +80,15 @@ func (t *huffmanBuilder) put(index, entry uint32, length uint8) bool {
 	return false
 }
 
-func (t *huffmanBuilder) findEmpty(index uint32) uint32 {
-	for t.tree[index] != 0 {
-		index += 2
-	}
-	return index
+// newNode allocates the next node of the tree. Nodes are allocated in
+// increasing order and put fills a node's first slot as soon as it allocates
+// it, so the nodes in use are always the prefix [0, next): the first free node
+// is next, and scanning the tree for it (as findEmpty used to) only walked over
+// every node allocated so far, which made building a codebook quadratic.
+func (t *huffmanBuilder) newNode() uint32 {
+	node := t.next
+	t.next += 2
+	return node
 }
 
 func (t *huffmanBuilder) build() *huffmanCode {
