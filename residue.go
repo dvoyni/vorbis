@@ -46,7 +46,9 @@ func (x *residue) ReadFrom(r *bitReader) error {
 	return nil
 }
 
-func (x *residue) Decode(r *bitReader, doNotDecode []bool, n uint32, books []codebook, out [][]float32) {
+// Decode adds the residue vectors to out. classifications is scratch space
+// the caller keeps between packets; Decode returns it, grown if it had to be.
+func (x *residue) Decode(r *bitReader, doNotDecode []bool, n uint32, books []codebook, out [][]float32, classifications []uint32) []uint32 {
 	ch := uint32(len(doNotDecode))
 	if x.residueType == 2 {
 		decode := false
@@ -57,7 +59,7 @@ func (x *residue) Decode(r *bitReader, doNotDecode []bool, n uint32, books []cod
 			}
 		}
 		if !decode {
-			return
+			return classifications
 		}
 		n *= ch
 		ch = 1
@@ -75,10 +77,16 @@ func (x *residue) Decode(r *bitReader, doNotDecode []bool, n uint32, books []cod
 	partitionsToRead := nToRead / x.partitionSize
 
 	if nToRead == 0 {
-		return
+		return classifications
 	}
 	cs := (partitionsToRead + classWordsPerCodeword)
-	classifications := make([]uint32, ch*cs)
+	if uint32(cap(classifications)) < ch*cs {
+		classifications = make([]uint32, ch*cs)
+	}
+	classifications = classifications[:ch*cs]
+	for i := range classifications {
+		classifications[i] = 0
+	}
 	for pass := 0; pass < 8; pass++ {
 		partitionCount := uint32(0)
 		for partitionCount < partitionsToRead {
@@ -137,4 +145,5 @@ func (x *residue) Decode(r *bitReader, doNotDecode []bool, n uint32, books []cod
 			}
 		}
 	}
+	return classifications
 }

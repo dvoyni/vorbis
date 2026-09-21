@@ -13,11 +13,6 @@ type floor0 struct {
 	bookList        []uint8
 }
 
-type floor0Data struct {
-	amplitude    uint32
-	coefficients []float32
-}
-
 func (f *floor0) ReadFrom(r *bitReader) error {
 	f.order = r.Read8(8)
 	f.rate = r.Read16(16)
@@ -31,14 +26,18 @@ func (f *floor0) ReadFrom(r *bitReader) error {
 	return nil
 }
 
-func (f *floor0) Decode(r *bitReader, books []codebook, n uint32) interface{} {
-	amplitude := r.Read32(uint(f.amplitudeBits))
-	if amplitude == 0 {
-		return nil
+func (f *floor0) Decode(r *bitReader, books []codebook, n uint32, d *floorData) bool {
+	d.amplitude = r.Read32(uint(f.amplitudeBits))
+	if d.amplitude == 0 {
+		return false
 	}
 	bookNumber := r.Read8(ilog(len(f.bookList)))
 	book := books[f.bookList[bookNumber]]
-	coefficients := make([]float32, f.order)
+	if cap(d.coefficients) < int(f.order) {
+		d.coefficients = make([]float32, f.order)
+	}
+	coefficients := d.coefficients[:f.order]
+	d.coefficients = coefficients
 	i := 0
 	last := float32(0)
 	for {
@@ -47,15 +46,14 @@ func (f *floor0) Decode(r *bitReader, books []codebook, n uint32) interface{} {
 			coefficients[i] = c + last
 			i++
 			if i >= len(coefficients) {
-				return floor0Data{amplitude, coefficients}
+				return true
 			}
 		}
 		last = tempVector[len(tempVector)-1]
 	}
 }
 
-func (f *floor0) Apply(out []float32, data interface{}) {
-	d := data.(floor0Data)
+func (f *floor0) Apply(out []float32, d *floorData) {
 	n := uint32(len(out))
 	i := uint32(0)
 	for i < n {
