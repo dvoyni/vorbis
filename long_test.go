@@ -21,7 +21,9 @@ func readLongFile(b *testing.B) *GobVorbis {
 
 // BenchmarkHeaders measures each stage of reading the headers: the
 // identification and comment headers alone, then the setup header on a decoder
-// that has already read those two.
+// that has already read those two. The setup cache is emptied before every
+// setup header, so this is the cost of parsing one; BenchmarkOpen is the cost
+// of a stream whose setup is already cached.
 func BenchmarkHeaders(b *testing.B) {
 	data := readLongFile(b)
 
@@ -49,6 +51,7 @@ func BenchmarkHeaders(b *testing.B) {
 		b.ReportAllocs()
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
+			forgetSetups()
 			dec := base
 			if err := dec.ReadHeader(data.Headers[2]); err != nil {
 				b.Fatal(err)
