@@ -54,7 +54,7 @@ func (f *floor0) Decode(r *bitReader, books []codebook, n uint32) interface{} {
 	}
 }
 
-func (f *floor0) Apply(out []float32, data interface{}) {
+func (f *floor0) Apply(out []float32, data interface{}, _ *floor1Scratch) {
 	d := data.(floor0Data)
 	n := uint32(len(out))
 	i := uint32(0)

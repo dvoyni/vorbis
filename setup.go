@@ -4,7 +4,10 @@ import "errors"
 
 type floor interface {
 	Decode(*bitReader, []codebook, uint32) interface{}
-	Apply(out []float32, data interface{})
+	// Apply renders the floor curve over out. scratch belongs to the calling
+	// Decoder, so that a floor read once can be applied from many Decoders at
+	// once.
+	Apply(out []float32, data interface{}, scratch *floor1Scratch)
 }
 
 type mapping struct {
@@ -24,13 +27,13 @@ type mode struct {
 	mapping   uint8
 }
 
-func (d *Decoder) readSetupHeader(header []byte) error {
+func (s *Setup) readSetupHeader(header []byte) error {
 	r := newBitReader(header)
 
 	// CODEBOOKS
-	d.codebooks = make([]codebook, r.Read16(8)+1)
-	for i := range d.codebooks {
-		err := d.codebooks[i].ReadFrom(r)
+	s.codebooks = make([]codebook, r.Read16(8)+1)
+	for i := range s.codebooks {
+		err := s.codebooks[i].ReadFrom(r)
 		if err != nil {
 			return err
 		}
@@ -45,18 +48,22 @@ func (d *Decoder) readSetupHeader(header []byte) error {
 	}
 
 	// FLOORS
-	d.floors = make([]floor, r.Read8(6)+1)
-	for i := range d.floors {
+	s.floors = make([]floor, r.Read8(6)+1)
+	s.floor1Points = 0
+	for i := range s.floors {
 		var err error
 		switch r.Read16(16) {
 		case 0:
 			f := new(floor0)
 			err = f.ReadFrom(r)
-			d.floors[i] = f
+			s.floors[i] = f
 		case 1:
 			f := new(floor1)
 			err = f.ReadFrom(r)
-			d.floors[i] = f
+			s.floors[i] = f
+			if len(f.xList) > s.floor1Points {
+				s.floor1Points = len(f.xList)
+			}
 		default:
 			return errors.New("vorbis: decoding error")
 		}
@@ -66,18 +73,18 @@ func (d *Decoder) readSetupHeader(header []byte) error {
 	}
 
 	// RESIDUES
-	d.residues = make([]residue, r.Read8(6)+1)
-	for i := range d.residues {
-		err := d.residues[i].ReadFrom(r)
+	s.residues = make([]residue, r.Read8(6)+1)
+	for i := range s.residues {
+		err := s.residues[i].ReadFrom(r)
 		if err != nil {
 			return err
 		}
 	}
 
 	// MAPPINGS
-	d.mappings = make([]mapping, r.Read8(6)+1)
-	for i := range d.mappings {
-		m := &d.mappings[i]
+	s.mappings = make([]mapping, r.Read8(6)+1)
+	for i := range s.mappings {
+		m := &s.mappings[i]
 		if r.Read16(16) != 0 {
 			return errors.New("vorbis: decoding error")
 		}
@@ -91,14 +98,14 @@ func (d *Decoder) readSetupHeader(header []byte) error {
 			m.magnitude = make([]uint8, m.couplingSteps)
 			m.angle = make([]uint8, m.couplingSteps)
 			for i := range m.magnitude {
-				m.magnitude[i] = r.Read8(ilog(d.channels - 1))
-				m.angle[i] = r.Read8(ilog(d.channels - 1))
+				m.magnitude[i] = r.Read8(ilog(s.channels - 1))
+				m.angle[i] = r.Read8(ilog(s.channels - 1))
 			}
 		}
 		if r.Read8(2) != 0 {
 			return errors.New("vorbis: decoding error")
 		}
-		m.mux = make([]uint8, d.channels)
+		m.mux = make([]uint8, s.channels)
 		if len(m.submaps) > 1 {
 			for i := range m.mux {
 				m.mux[i] = r.Read8(4)
@@ -112,9 +119,9 @@ func (d *Decoder) readSetupHeader(header []byte) error {
 	}
 
 	// MODES
-	d.modes = make([]mode, r.Read8(6)+1)
-	for i := range d.modes {
-		m := &d.modes[i]
+	s.modes = make([]mode, r.Read8(6)+1)
+	for i := range s.modes {
+		m := &s.modes[i]
 		m.blockflag = r.Read8(1)
 		if r.Read16(16) != 0 {
 			return errors.New("vorbis: decoding error")
@@ -128,21 +135,15 @@ func (d *Decoder) readSetupHeader(header []byte) error {
 	if !r.ReadBool() {
 		return errors.New("vorbis: decoding error")
 	}
-	d.initLookup()
+	s.initLookup()
 	return nil
 }
 
-func (d *Decoder) initLookup() {
-	d.windows[0] = makeWindow(d.blocksize[0])
-	d.windows[1] = makeWindow(d.blocksize[1])
-	generateIMDCTLookup(d.blocksize[0], &d.lookup[0])
-	generateIMDCTLookup(d.blocksize[1], &d.lookup[1])
-	d.residueBuffer = make([][]float32, d.channels)
-	for i := range d.residueBuffer {
-		d.residueBuffer[i] = make([]float32, d.blocksize[1]/2)
-	}
-	d.rawBuffer = make([][]float32, d.channels)
-	for i := range d.rawBuffer {
-		d.rawBuffer[i] = make([]float32, d.blocksize[1])
-	}
+// initLookup builds the tables that depend only on the blocksizes. They are
+// read-only once built, which is what lets a Setup be shared.
+func (s *Setup) initLookup() {
+	s.windows[0] = makeWindow(s.blocksize[0])
+	s.windows[1] = makeWindow(s.blocksize[1])
+	generateIMDCTLookup(s.blocksize[0], &s.lookup[0])
+	generateIMDCTLookup(s.blocksize[1], &s.lookup[1])
 }

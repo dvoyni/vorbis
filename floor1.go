@@ -9,7 +9,13 @@ type floor1 struct {
 	rangebits          uint8
 	xList              []uint32
 	sort               []uint32
+}
 
+// floor1Scratch is the working space Apply needs, sized to the longest x list
+// in the Setup. It is the one thing about a floor that is written during
+// decoding, so it lives on the Decoder rather than on the floor, and a floor
+// read once can serve any number of Decoders at once.
+type floor1Scratch struct {
 	step2  []bool
 	finalY []uint32
 }
@@ -60,9 +66,6 @@ func (f *floor1) ReadFrom(r *bitReader) error {
 		f.sort[i] = uint32(i)
 	}
 	sort.Sort(f)
-
-	f.step2 = make([]bool, len(f.xList))
-	f.finalY = make([]uint32, len(f.xList))
 	return nil
 }
 
@@ -96,18 +99,20 @@ func (f *floor1) Decode(r *bitReader, books []codebook, n uint32) interface{} {
 	return y
 }
 
-func (f *floor1) Apply(out []float32, data interface{}) {
+func (f *floor1) Apply(out []float32, data interface{}, scratch *floor1Scratch) {
 	y := data.([]uint32)
 	n := uint32(len(out))
 	range_ := [4]uint32{256, 128, 86, 64}[f.multiplier-1]
 
-	f.step2[0], f.step2[1] = true, true
-	f.finalY[0], f.finalY[1] = y[0], y[1]
+	step2 := scratch.step2[:len(f.xList)]
+	finalY := scratch.finalY[:len(f.xList)]
+	step2[0], step2[1] = true, true
+	finalY[0], finalY[1] = y[0], y[1]
 
 	for i := 2; i < len(f.xList); i++ {
 		low := lowNeighbor(f.xList, i)
 		high := highNeighbor(f.xList, i)
-		predicted := renderPoint(f.xList[low], f.finalY[low], f.xList[high], f.finalY[high], f.xList[i])
+		predicted := renderPoint(f.xList[low], finalY[low], f.xList[high], finalY[high], f.xList[i])
 		val := y[i]
 
 		highRoom := range_ - predicted
@@ -120,36 +125,36 @@ func (f *floor1) Apply(out []float32, data interface{}) {
 		}
 
 		if val == 0 {
-			f.step2[i] = false
-			f.finalY[i] = predicted
+			step2[i] = false
+			finalY[i] = predicted
 		} else {
-			f.step2[low] = true
-			f.step2[high] = true
-			f.step2[i] = true
+			step2[low] = true
+			step2[high] = true
+			step2[i] = true
 			if val >= room {
 				if highRoom > lowRoom {
-					f.finalY[i] = val - lowRoom + predicted
+					finalY[i] = val - lowRoom + predicted
 				} else {
-					f.finalY[i] = predicted - val + highRoom - 1
+					finalY[i] = predicted - val + highRoom - 1
 				}
 			} else {
 				if val%2 == 1 {
-					f.finalY[i] = predicted - (val+1)/2
+					finalY[i] = predicted - (val+1)/2
 				} else {
-					f.finalY[i] = predicted + val/2
+					finalY[i] = predicted + val/2
 				}
 			}
 		}
 	}
 
 	var hx, lx uint32
-	ly := f.finalY[0] * uint32(f.multiplier)
+	ly := finalY[0] * uint32(f.multiplier)
 
 	var hy uint32
-	for j := 1; j < len(f.finalY); j++ {
+	for j := 1; j < len(finalY); j++ {
 		i := f.sort[j]
-		if f.step2[i] {
-			hy = f.finalY[i] * uint32(f.multiplier)
+		if step2[i] {
+			hy = finalY[i] * uint32(f.multiplier)
 			hx = f.xList[i]
 			renderLine(lx, ly, hx, hy, out)
 			lx = hx

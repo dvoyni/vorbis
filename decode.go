@@ -9,15 +9,16 @@ type floorData struct {
 }
 
 func (d *Decoder) decodePacket(r *bitReader, out []float32) ([]float32, error) {
+	s := d.setup
 	if r.ReadBool() {
 		return nil, errors.New("vorbis: decoding error")
 	}
-	modeNumber := r.Read8(ilog(len(d.modes) - 1))
-	mode := d.modes[modeNumber]
+	modeNumber := r.Read8(ilog(len(s.modes) - 1))
+	mode := s.modes[modeNumber]
 	// decode window type
 	blocktype := mode.blockflag
 	longWindow := mode.blockflag == 1
-	blocksize := d.blocksize[blocktype]
+	blocksize := s.blocksize[blocktype]
 	spectrumSize := uint32(blocksize / 2)
 	windowPrev, windowNext := false, false
 	window := windowType{blocksize, blocksize, blocksize}
@@ -25,17 +26,14 @@ func (d *Decoder) decodePacket(r *bitReader, out []float32) ([]float32, error) {
 		windowPrev = r.ReadBool()
 		windowNext = r.ReadBool()
 		if !windowPrev {
-			window.prev = d.blocksize[0]
+			window.prev = s.blocksize[0]
 		}
 		if !windowNext {
-			window.next = d.blocksize[0]
+			window.next = s.blocksize[0]
 		}
 	}
 
-	mapping := &d.mappings[mode.mapping]
-	if d.floorBuffer == nil {
-		d.floorBuffer = make([]floorData, d.channels)
-	}
+	mapping := &s.mappings[mode.mapping]
 	for ch := range d.residueBuffer {
 		d.residueBuffer[ch] = d.residueBuffer[ch][:spectrumSize]
 		for i := range d.residueBuffer[ch] {
@@ -51,13 +49,14 @@ func (d *Decoder) decodePacket(r *bitReader, out []float32) ([]float32, error) {
 	// inverse MDCT
 	for ch := range d.rawBuffer {
 		d.rawBuffer[ch] = d.rawBuffer[ch][:blocksize]
-		imdct(&d.lookup[blocktype], d.residueBuffer[ch], d.rawBuffer[ch])
+		imdct(&s.lookup[blocktype], d.residueBuffer[ch], d.rawBuffer[ch])
 	}
 
 	// apply window and overlap
-	d.applyWindow(&window, d.rawBuffer)
+	s.applyWindow(&window, d.rawBuffer)
+	channels := s.channels
 	center := blocksize / 2
-	offset := d.blocksize[1]/4 - d.blocksize[0]/4
+	offset := s.blocksize[1]/4 - s.blocksize[0]/4
 	n := 0
 	if d.hasOverlap {
 		n = blocksize / 2
@@ -68,7 +67,7 @@ func (d *Decoder) decodePacket(r *bitReader, out []float32) ([]float32, error) {
 			n += offset
 		}
 		if out == nil {
-			out = make([]float32, n*d.channels)
+			out = make([]float32, n*channels)
 		}
 	}
 	if longWindow {
@@ -79,7 +78,7 @@ func (d *Decoder) decodePacket(r *bitReader, out []float32) ([]float32, error) {
 		if d.hasOverlap {
 			for ch := range d.rawBuffer {
 				for i := 0; i < center-start; i++ {
-					out[i*d.channels+ch] = d.rawBuffer[ch][start+i] + d.overlap[(start+i)*d.channels+ch]
+					out[i*channels+ch] = d.rawBuffer[ch][start+i] + d.overlap[(start+i)*channels+ch]
 				}
 			}
 		}
@@ -89,16 +88,16 @@ func (d *Decoder) decodePacket(r *bitReader, out []float32) ([]float32, error) {
 			if d.overlapShort {
 				for ch := range d.rawBuffer {
 					for i := 0; i < center; i++ {
-						out[i*d.channels+ch] = d.rawBuffer[ch][i] + d.overlap[(offset+i)*d.channels+ch]
+						out[i*channels+ch] = d.rawBuffer[ch][i] + d.overlap[(offset+i)*channels+ch]
 					}
 				}
 			} else {
-				for i := 0; i < offset*d.channels; i++ {
+				for i := 0; i < offset*channels; i++ {
 					out[i] = d.overlap[i]
 				}
 				for ch := range d.rawBuffer {
 					for i := offset; i < offset+center; i++ {
-						out[i*d.channels+ch] = d.rawBuffer[ch][i-offset] + d.overlap[i*d.channels+ch]
+						out[i*channels+ch] = d.rawBuffer[ch][i-offset] + d.overlap[i*channels+ch]
 					}
 				}
 			}
@@ -109,29 +108,30 @@ func (d *Decoder) decodePacket(r *bitReader, out []float32) ([]float32, error) {
 	if !d.hasOverlap {
 		n = 0
 	}
-	overlapCenter := d.blocksize[1] / 4
+	overlapCenter := s.blocksize[1] / 4
 	oStart := overlapCenter - center/2
 	oEnd := overlapCenter + center/2
-	for i := 0; i < oStart*d.channels; i++ {
+	for i := 0; i < oStart*channels; i++ {
 		d.overlap[i] = 0
 	}
 	for ch := range d.rawBuffer {
 		for i := oStart; i < oEnd; i++ {
-			d.overlap[i*d.channels+ch] = d.rawBuffer[ch][center+i-oStart]
+			d.overlap[i*channels+ch] = d.rawBuffer[ch][center+i-oStart]
 		}
 	}
-	for i := oEnd * d.channels; i < len(d.overlap); i++ {
+	for i := oEnd * channels; i < len(d.overlap); i++ {
 		d.overlap[i] = 0
 	}
 	d.hasOverlap = true
 
-	return out[:n*d.channels], nil
+	return out[:n*channels], nil
 }
 
 func (d *Decoder) decodeFloors(r *bitReader, floors []floorData, mapping *mapping, n uint32) {
+	s := d.setup
 	for ch := range floors {
-		floor := d.floors[mapping.submaps[mapping.mux[ch]].floor]
-		data := floor.Decode(r, d.codebooks, n)
+		floor := s.floors[mapping.submaps[mapping.mux[ch]].floor]
+		data := floor.Decode(r, s.codebooks, n)
 		floors[ch] = floorData{floor, data, data == nil}
 	}
 
@@ -144,16 +144,17 @@ func (d *Decoder) decodeFloors(r *bitReader, floors []floorData, mapping *mappin
 }
 
 func (d *Decoder) decodeResidue(r *bitReader, out [][]float32, mapping *mapping, floors []floorData, n uint32) {
+	s := d.setup
 	for i := range mapping.submaps {
 		doNotDecode := make([]bool, 0, len(out))
 		tmp := make([][]float32, 0, len(out))
-		for j := 0; j < d.channels; j++ {
+		for j := 0; j < s.channels; j++ {
 			if mapping.mux[j] == uint8(i) {
 				doNotDecode = append(doNotDecode, floors[j].noResidue)
 				tmp = append(tmp, out[j])
 			}
 		}
-		d.residues[mapping.submaps[i].residue].Decode(r, doNotDecode, n, d.codebooks, tmp)
+		s.residues[mapping.submaps[i].residue].Decode(r, doNotDecode, n, s.codebooks, tmp)
 	}
 }
 
@@ -186,7 +187,7 @@ func (d *Decoder) inverseCoupling(mapping *mapping, residueVectors [][]float32) 
 func (d *Decoder) applyFloor(floors []floorData, residueVectors [][]float32) {
 	for ch := range residueVectors {
 		if floors[ch].data != nil {
-			floors[ch].floor.Apply(residueVectors[ch], floors[ch].data)
+			floors[ch].floor.Apply(residueVectors[ch], floors[ch].data, &d.floorScratch)
 		} else {
 			for i := range residueVectors[ch] {
 				residueVectors[ch][i] = 0

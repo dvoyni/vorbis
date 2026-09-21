@@ -6,7 +6,8 @@ type windowType struct {
 	size, prev, next int
 }
 
-func (d *Decoder) applyWindow(t *windowType, samples [][]float32) {
+// applyWindow reads the Setup's window tables and writes only into samples.
+func (d *Setup) applyWindow(t *windowType, samples [][]float32) {
 	center := t.size / 2
 	prevOffset := t.size/4 - t.prev/4
 	nextOffset := t.size/4 - t.next/4
