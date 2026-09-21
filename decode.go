@@ -13,8 +13,11 @@ type floorData struct {
 	// floor 0
 	amplitude    uint32
 	coefficients []float32
-	// floor 1
-	y []uint32
+	// floor 1, with the scratch Apply works in, which is per stream so that
+	// the floor itself is never written while decoding
+	y      []uint32
+	step2  []bool
+	finalY []uint32
 }
 
 func (d *Decoder) decodePacket(r *bitReader, out []float32) ([]float32, error) {

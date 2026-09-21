@@ -13,11 +13,10 @@ type Decoder struct {
 	blocksize  [2]int
 	CommentHeader
 
-	codebooks []codebook
-	floors    []floor
-	residues  []residue
-	mappings  []mapping
-	modes     []mode
+	// setup is what the setup header says. It is shared with every other
+	// Decoder whose stream carries the same setup header, see setupFor, so
+	// nothing on the decode path writes into it.
+	setup
 
 	overlap      []float32
 	hasOverlap   bool
@@ -94,12 +93,11 @@ func (d *Decoder) ReadHeader(header []byte) error {
 	case headerTypeComment:
 		return d.readCommentHeader(header)
 	case headerTypeSetup:
-		err := d.readSetupHeader(header)
+		s, err := setupFor(header, d.channels)
 		if err != nil {
 			return err
 		}
-		d.overlap = make([]float32, d.blocksize[1]*d.channels)
-		d.setupRead = true
+		d.useSetup(s)
 	default:
 		return errors.New("vorbis: unknown header type")
 	}
