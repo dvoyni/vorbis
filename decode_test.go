@@ -14,7 +14,11 @@ type GobVorbis struct {
 }
 
 func readTestFile() (*GobVorbis, error) {
-	file, err := os.Open("testdata/test.gob")
+	return readGobFile("testdata/test.gob")
+}
+
+func readGobFile(path string) (*GobVorbis, error) {
+	file, err := os.Open(path)
 	if err != nil {
 		return nil, err
 	}
